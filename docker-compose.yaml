@@ -20,21 +20,25 @@ services:
       dockerfile: Dockerfile.mock-upstream
     ports: ["4319:4318", "8889:8889"]   # Forward for direct testing
   
+  # Using a more accessible public image for testing
   workload:
-    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/otelcontribcol:0.92-loadgen
+    image: otel/opentelemetry-collector:0.80.0
+    command: ["--config=/etc/otel-config/collector.yaml"]
+    volumes:
+      - ./otel-config:/etc/otel-config
     environment:
       OTLP_ENDPOINT: "http://collector:4318"
     depends_on:
       - collector
   
   prometheus:
-    image: prom/prometheus:v2.52
+    image: prom/prometheus:v2.45.0
     volumes: 
       - "./prometheus.yaml:/etc/prometheus/prometheus.yml"
     ports: ["9090:9090"]
   
   grafana:
-    image: grafana/grafana-oss:10.2
+    image: grafana/grafana:10.0.3
     volumes: 
       - "./dashboards:/etc/dashboards"
       - "./grafana/provisioning:/etc/grafana/provisioning"
