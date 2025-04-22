@@ -1,0 +1,43 @@
+version: '3.9'
+services:
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile.collector   # copies plugins
+    environment:
+      MEMORY_BALLAST_SIZE_MIB: "64"
+    volumes:
+      - ./otel-config:/etc/otel
+      - ./data/dlq:/var/lib/nrdotplus/dlq
+      - ./plugins:/plugins
+    ports: ["4318:4318", "8888:8888"]   # 8888 = Prom metrics
+    depends_on:
+      - mock-upstream
+  
+  mock-upstream:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock-upstream
+    ports: ["4319:4318", "8889:8889"]   # Forward for direct testing
+  
+  workload:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/otelcontribcol:0.92-loadgen
+    environment:
+      OTLP_ENDPOINT: "http://collector:4318"
+    depends_on:
+      - collector
+  
+  prometheus:
+    image: prom/prometheus:v2.52
+    volumes: 
+      - "./prometheus.yaml:/etc/prometheus/prometheus.yml"
+    ports: ["9090:9090"]
+  
+  grafana:
+    image: grafana/grafana-oss:10.2
+    volumes: 
+      - "./dashboards:/etc/dashboards"
+      - "./grafana/provisioning:/etc/grafana/provisioning"
+    ports: ["3000:3000"]
+    depends_on:
+      - prometheus

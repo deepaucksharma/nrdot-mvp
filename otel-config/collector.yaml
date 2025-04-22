@@ -1,0 +1,49 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: "0.0.0.0:4318"
+        max_request_body_size: 4000000      # 4 MB
+
+processors:
+  resourcedetection: {}
+  cardinalitylimiter/custom:
+    plugin_path: /plugins/cl.so
+    max_keys: 65536
+    high_score: 0.75
+    critical_score: 0.90
+    aggregate_labels: ["container.image.tag","k8s.pod.uid"]
+  batch:
+    send_batch_size: 1000
+    timeout: 5s
+
+exporters:
+  otlphttp/upstream:
+    endpoint: "http://mock-upstream:4318"
+    compression: zstd
+    sending_queue:
+      enabled: true
+      queue_size: 2000
+      priority:
+        enabled: true
+        classes:
+          - { name: critical, weight: 5,  pattern: "metric.name =~ \"^system\\.\"" }
+          - { name: high,     weight: 3,  pattern: "log.severity_num >= 30" }
+          - { name: normal,   weight: 1,  pattern: ".*" }
+    persistent_queue:
+      enabled: true
+      storage_id: file_storage
+      capacity: 15000000000       # 15 GiB
+
+extensions:
+  file_storage:
+    directory: /var/lib/nrdotplus/dlq
+    max_segment_mib: 128
+    verification_interval: 10m
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    metrics: { receivers: [otlp], processors: [resourcedetection, cardinalitylimiter/custom, batch], exporters: [otlphttp/upstream] }
+    logs:    { receivers: [otlp], processors: [batch], exporters: [otlphttp/upstream] }
+    traces:  { receivers: [otlp], processors: [batch], exporters: [otlphttp/upstream] }

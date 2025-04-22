@@ -1,0 +1,30 @@
+FROM golang:1.21-bullseye AS builder
+
+WORKDIR /app
+
+# Copy go.mod, go.sum first for better caching
+COPY go.mod go.sum* ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the mock upstream service
+RUN go build -o bin/mock-upstream ./cmd/mock-upstream
+
+# Create minimal runtime image
+FROM debian:bullseye-slim
+
+# Install dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy binary from builder
+COPY --from=builder /app/bin/mock-upstream /usr/local/bin/mock-upstream
+
+# Set up entrypoint
+ENTRYPOINT ["/usr/local/bin/mock-upstream"]
+
+# Expose ports
+EXPOSE 4318 8889

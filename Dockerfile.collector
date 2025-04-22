@@ -1,0 +1,38 @@
+FROM golang:1.21-bullseye AS builder
+
+WORKDIR /app
+
+# Copy go.mod, go.sum first for better caching
+COPY go.mod go.sum* ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build plugins and collector
+RUN go build -buildmode=plugin -o plugins/cl.so ./plugins/cl
+RUN go build -buildmode=plugin -o plugins/apq.so ./plugins/apq
+RUN go build -tags "experimental apq" -o bin/otelcol-custom ./cmd/collector
+
+# Create minimal runtime image
+FROM debian:bullseye-slim
+
+# Install dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create directories
+RUN mkdir -p /etc/otel /var/lib/nrdotplus/dlq /plugins
+
+# Copy binary and plugins from builder
+COPY --from=builder /app/bin/otelcol-custom /usr/local/bin/otelcol-custom
+COPY --from=builder /app/plugins/cl.so /plugins/cl.so
+COPY --from=builder /app/plugins/apq.so /plugins/apq.so
+
+# Set up entrypoint
+ENTRYPOINT ["/usr/local/bin/otelcol-custom"]
+CMD ["--config", "/etc/otel/collector.yaml"]
+
+# Expose ports
+EXPOSE 4318 8888
