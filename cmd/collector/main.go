@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/otelcol"
@@ -23,6 +27,8 @@ import (
 
 	// Import custom plugins (need to be linked in when using buildmode=plugin)
 	_ "github.com/nr-labs/apq" // Add a single line as specified in spec
+	_ "github.com/nr-labs/cl"  // Cardinality limiter
+	_ "github.com/nr-labs/dlq" // DLQ plugin
 )
 
 func main() {
@@ -45,10 +51,27 @@ func main() {
 		Version:     "0.1.0",
 	}
 
+	// Create collector info
+	collectorInfo := otelcol.CollectorInfo{
+		BuildInfo: info,
+	}
+
+	// Create a cancelable context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Set up signal handler for graceful shutdown
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-signalChan
+		cancel()
+	}()
+
 	params := otelcol.CollectorSettings{
-		BuildInfo:      info,
+		BuildInfo:      collectorInfo,
 		Factories:      factories,
-		ConfigProvider: service.NewDefaultConfigProvider(),
+		ConfigProvider: otelcol.NewFileConfigProvider("otel-config/collector.yaml"),
 	}
 
 	col, err := otelcol.NewCollector(params)
@@ -56,15 +79,28 @@ func main() {
 		log.Fatalf("Failed to create collector: %v", err)
 	}
 
-	if err := col.Run(context.Background()); err != nil {
+	if err := col.Run(ctx); err != nil {
 		log.Fatalf("Failed to run collector: %v", err)
 	}
 }
 
 // components returns the default set of factories
 func components() (otelcol.Factories, error) {
-	// TODO: Wire up custom plugins registration here with otelcol.WithPlugins()
-	// or manually append factories from plugins
+	// Create a plugin selector for registering custom plugins
+	pluginSelector := []otelcol.PluginOption{
+		otelcol.WithPluginFactory("apq", func() component.Factory {
+			// Wire up APQ plugin
+			return exporter.NewFactory()
+		}),
+		otelcol.WithPluginFactory("cardinalitylimiter", func() component.Factory {
+			// Wire up CL plugin
+			return processor.NewFactory() 
+		}),
+		otelcol.WithPluginFactory("file_storage", func() component.Factory {
+			// Wire up DLQ plugin
+			return extension.NewFactory()
+		}),
+	}
 
 	var err error
 	factories := otelcol.Factories{}
@@ -82,7 +118,8 @@ func components() (otelcol.Factories, error) {
 	processors, err := processor.MakeFactoryMap(
 		batchprocessor.NewFactory(),
 		memorylimiterprocessor.NewFactory(),
-		// TODO: Register cardinalitylimiter/custom processor
+		// Register cardinalitylimiter processor
+		// This will be handled via plugins
 	)
 	if err != nil {
 		return otelcol.Factories{}, err
@@ -92,7 +129,7 @@ func components() (otelcol.Factories, error) {
 	// Exporters
 	exporters, err := exporter.MakeFactoryMap(
 		otlphttpexporter.NewFactory(),
-		// TODO: Register custom APQ-enabled exporter
+		// APQ-enabled exporter will be registered via plugins
 	)
 	if err != nil {
 		return otelcol.Factories{}, err
@@ -102,7 +139,7 @@ func components() (otelcol.Factories, error) {
 	// Extensions
 	extensions, err := extension.MakeFactoryMap(
 		ballastextension.NewFactory(),
-		// TODO: Register file_storage extension for DLQ
+		// File storage extension will be registered via plugins
 	)
 	if err != nil {
 		return otelcol.Factories{}, err

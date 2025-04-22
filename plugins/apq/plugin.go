@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -210,6 +211,28 @@ func (q *AdaptivePriorityQueue) Dequeue() (interface{}, error) {
 
 // DequeueBlocking waits for an item to be available and then dequeues it
 func (q *AdaptivePriorityQueue) DequeueBlocking(ctx context.Context) (interface{}, error) {
+	// Create a condition variable for better blocking behavior
+	var mu sync.Mutex
+	cond := sync.NewCond(&mu)
+	
+	// Set up a goroutine to signal when an item is available
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(50 * time.Millisecond):
+				// Check if there are items, signal if there are
+				if q.Size() > 0 {
+					cond.Signal()
+				}
+			}
+		}
+	}()
+	
+	mu.Lock()
+	defer mu.Unlock()
+	
 	for {
 		// Try to dequeue
 		item, err := q.Dequeue()
@@ -217,12 +240,12 @@ func (q *AdaptivePriorityQueue) DequeueBlocking(ctx context.Context) (interface{
 			return item, nil
 		}
 		
-		// If queue is empty, wait briefly and check again
+		// If queue is empty, wait for signal
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(10 * time.Millisecond):
-			// Continue and try again
+		default:
+			cond.Wait()
 		}
 	}
 }
@@ -245,11 +268,21 @@ func (q *AdaptivePriorityQueue) getTotalSize() int {
 
 // classifyItem determines which priority class an item belongs to
 func (q *AdaptivePriorityQueue) classifyItem(item interface{}) int {
-	// TODO: Implement proper classification based on item content
-	// For now, return a default class (will be enhanced with actual pattern matching)
-	// This is a key gap mentioned in the roadmap
+	// Implement basic pattern matching for classification
+	// For MVP, we'll check for key patterns in string representation
 	
-	return 0 // Default to highest priority for MVP
+	// Convert item to a string for pattern matching
+	itemStr := fmt.Sprintf("%v", item)
+	
+	// Try to match against each pattern
+	for i, pattern := range q.classPatterns {
+		if pattern.MatchString(itemStr) {
+			return i
+		}
+	}
+	
+	// Default to lowest priority if no pattern matches
+	return len(q.queues) - 1
 }
 
 // selectPriorityClass implements the WRR scheduling algorithm
@@ -316,9 +349,35 @@ type APQSendingQueueFactory struct{}
 
 // NewFactory creates a new factory for APQ
 func NewFactory() exporter.Factory {
-	// This is a plugin stub; in real implementation, we would
-	// hook into the exporter.Factory chain to provide our queue
-	return nil
+	// Create a proper exporter factory that integrates APQ
+	return exporter.NewFactory(
+		"apqexporter",
+		createDefaultConfig,
+		exporter.WithMetrics(createMetricsExporter, component.StabilityLevelBeta),
+	)
+}
+
+// createDefaultConfig creates the default configuration for the APQ exporter
+func createDefaultConfig() component.Config {
+	return &APQConfig{
+		Enabled: true,
+		Classes: []PriorityClass{
+			{Name: "high", Weight: 3, Pattern: "high|critical"},
+			{Name: "medium", Weight: 2, Pattern: "medium|normal"},
+			{Name: "low", Weight: 1, Pattern: "low|background"},
+		},
+	}
+}
+
+// createMetricsExporter creates a new metrics exporter with APQ functionality
+func createMetricsExporter(
+	ctx context.Context,
+	set exporter.CreateSettings,
+	cfg component.Config,
+) (exporter.Metrics, error) {
+	// Implementation would integrate the APQ for metrics exporting
+	// This is just a stub for the MVP
+	return nil, errors.New("not implemented: this is just a stub for the APQ metrics exporter")
 }
 
 // Export the plugin factory function

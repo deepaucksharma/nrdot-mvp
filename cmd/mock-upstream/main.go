@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -32,11 +33,18 @@ var (
 			Help: "Total count of requests that failed due to simulated failures",
 		},
 	)
+	serviceUnavailableTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "mock_upstream_service_unavailable_total",
+			Help: "Total count of requests that returned 503 Service Unavailable",
+		},
+	)
 )
 
 func init() {
 	prometheus.MustRegister(requestsTotal)
 	prometheus.MustRegister(failedRequestsTotal)
+	prometheus.MustRegister(serviceUnavailableTotal)
 }
 
 func main() {
@@ -96,9 +104,12 @@ func main() {
 func handleOTLPRequest(w http.ResponseWriter, r *http.Request) {
 	// Simulate outage if enabled
 	if outageMode.Load() {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		requestsTotal.WithLabelValues("503").Inc()
+		serviceUnavailableTotal.Inc()
 		log.Println("Simulating outage - returning 503")
+		json.NewEncoder(w).Encode(map[string]string{"error": "Service unavailable"})
 		return
 	}
 
@@ -107,17 +118,21 @@ func handleOTLPRequest(w http.ResponseWriter, r *http.Request) {
 	if failureRate > 0 {
 		rand.Seed(time.Now().UnixNano())
 		if rand.Intn(100) < int(failureRate) {
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
 			failedRequestsTotal.Inc()
 			requestsTotal.WithLabelValues("429").Inc()
 			log.Println("Simulating failure - returning 429")
+			json.NewEncoder(w).Encode(map[string]string{"error": "Too many requests"})
 			return
 		}
 	}
 
 	// Successfully process the OTLP data (just acknowledge it)
+	w.Header().Set("Content-Type", "application/json")
 	requestsTotal.WithLabelValues("200").Inc()
 	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 	log.Println("Request processed successfully")
 }
 
@@ -137,7 +152,10 @@ func handleOutageControl(w http.ResponseWriter, r *http.Request) {
 
 	outageMode.Store(req.Enabled)
 	log.Printf("Outage mode set to: %v", req.Enabled)
+	
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
 func handleFailureRateControl(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +181,10 @@ func handleFailureRateControl(w http.ResponseWriter, r *http.Request) {
 
 	failureRatePerc.Store(req.RatePercent)
 	log.Printf("Failure rate set to: %d%%", req.RatePercent)
+	
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
 func handleStatusCheck(w http.ResponseWriter, r *http.Request) {
@@ -173,11 +194,11 @@ func handleStatusCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := struct {
-		OutageEnabled bool  `json:"outage_enabled"`
-		FailureRate   int32 `json:"failure_rate_percent"`
+		OutageEnabled      bool  `json:"outage_enabled"`
+		FailureRatePercent int32 `json:"failure_rate_percent"`
 	}{
-		OutageEnabled: outageMode.Load(),
-		FailureRate:   failureRatePerc.Load(),
+		OutageEnabled:      outageMode.Load(),
+		FailureRatePercent: failureRatePerc.Load(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

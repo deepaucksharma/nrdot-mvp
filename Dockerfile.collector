@@ -12,6 +12,7 @@ COPY . .
 # Build plugins and collector
 RUN go build -buildmode=plugin -o plugins/cl.so ./plugins/cl
 RUN go build -buildmode=plugin -o plugins/apq.so ./plugins/apq
+RUN go build -buildmode=plugin -o plugins/dlq.so ./plugins/dlq
 RUN go build -tags "experimental apq" -o bin/otelcol-custom ./cmd/collector
 
 # Create minimal runtime image
@@ -20,6 +21,8 @@ FROM debian:bullseye-slim
 # Install dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Create directories
@@ -29,6 +32,7 @@ RUN mkdir -p /etc/otel /var/lib/nrdotplus/dlq /plugins
 COPY --from=builder /app/bin/otelcol-custom /usr/local/bin/otelcol-custom
 COPY --from=builder /app/plugins/cl.so /plugins/cl.so
 COPY --from=builder /app/plugins/apq.so /plugins/apq.so
+COPY --from=builder /app/plugins/dlq.so /plugins/dlq.so
 
 # Set up entrypoint
 ENTRYPOINT ["/usr/local/bin/otelcol-custom"]
