@@ -6,20 +6,16 @@ echo "Building NRDOT + MVP..."
 # Create bin directory if it doesn't exist
 mkdir -p bin
 
-# Build plugins
-echo "Building CardinalityLimiter plugin..."
-go build -buildmode=plugin -o plugins/cl.so ./plugins/cl
-go mod tidy -C ./plugins/cl
+# Build all plugins in a loop
+PLUGINS=("cl" "apq" "dlq")
+for plugin in "${PLUGINS[@]}"; do
+  echo "Building ${plugin} plugin..."
+  go build -buildmode=plugin -o plugins/${plugin}.so ./plugins/${plugin}
+  go mod tidy -C ./plugins/${plugin}
+done
 
-echo "Building APQ plugin..."
-go build -buildmode=plugin -o plugins/apq.so ./plugins/apq
-go mod tidy -C ./plugins/apq
-
-echo "Building DLQ plugin..."
-go build -buildmode=plugin -o plugins/dlq.so ./plugins/dlq
-go mod tidy -C ./plugins/dlq
-
-echo "Building custom OpenTelemetry collector with experimental tags..."
+# Build main applications
+echo "Building custom OpenTelemetry collector..."
 go build -tags "experimental apq" -o bin/otelcol-custom ./cmd/collector
 
 echo "Building mock-upstream service..."

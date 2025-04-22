@@ -2,30 +2,48 @@
 set -e
 
 # Script to simulate upstream outage by toggling mock-upstream service mode
-# Usage: outage.sh on|off
+# Usage: outage.sh on|off|status
 
-if [ "$1" != "on" ] && [ "$1" != "off" ]; then
-    echo "Usage: $0 on|off"
-    exit 1
+# Default values
+API_URL="${UPSTREAM_API_URL:-http://localhost:4319}"
+COMMAND="$1"
+
+# Command validation and help
+if [[ "$COMMAND" != "on" && "$COMMAND" != "off" && "$COMMAND" != "status" ]]; then
+  echo "Usage: $0 [on|off|status]"
+  echo
+  echo "Commands:"
+  echo "  on      - Simulate upstream outage"
+  echo "  off     - Heal upstream connection"
+  echo "  status  - Show current upstream status"
+  exit 1
 fi
 
+# Just show status if that's what was requested
+if [[ "$COMMAND" == "status" ]]; then
+  echo "Current upstream status:"
+  curl -s "${API_URL}/control/status" | jq
+  exit 0
+fi
+
+# Set enabled flag based on command
 ENABLED="false"
-if [ "$1" == "on" ]; then
-    ENABLED="true"
-    echo "Simulating upstream outage..."
+if [[ "$COMMAND" == "on" ]]; then
+  ENABLED="true"
+  echo "Simulating upstream outage..."
 else
-    echo "Healing upstream connection..."
+  echo "Healing upstream connection..."
 fi
 
 # Send request to mock-upstream control endpoint
 curl -X POST \
      -H "Content-Type: application/json" \
      -d "{\"enabled\": $ENABLED}" \
-     http://localhost:4319/control/outage
+     "${API_URL}/control/outage"
 
-echo ""
+echo
 echo "Outage mode set to: $ENABLED"
 
-# Check the status
+# Always show the status after making a change
 echo "Current upstream status:"
-curl -s http://localhost:4319/control/status | jq
+curl -s "${API_URL}/control/status" | jq
